@@ -1,0 +1,1 @@
+All JSON documents stored in the data/json_files directory follow a year–act-number naming convention (e.g., 1938__04.json, 1972__57.json). Such naming corresponds to statutory Acts. Therefore, all documents within this dataset are classified as statutory sources by default. This classification is applied uniformly during ingestion and does not rely on content interpretation.

@@ -1,0 +1,53 @@
+# -------------------------
+# Python / bytecode
+# -------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# -------------------------
+# Virtual environment
+# -------------------------
+.venv/
+
+# -------------------------
+# Environment variables
+# -------------------------
+.env
+
+# -------------------------
+# Editor / OS
+# -------------------------
+.vscode/
+.DS_Store
+
+# -------------------------
+# Build / packaging
+# -------------------------
+build/
+dist/
+*.egg-info/
+wheels/
+
+# -------------------------
+# RAW DATA (DO NOT PUSH HEAVY FILES)
+# -------------------------
+data/json_files/
+data/pdf_files/
+
+!data/.gitkeep
+!data/json_files/.gitkeep
+!data/pdf_files/.gitkeep
+
+# -------------------------
+# VECTOR DATABASE (NEVER COMMIT)
+# -------------------------
+vector_store/
+notebooks/Data/vector_store/
+chroma.sqlite3
+
+# -------------------------
+# Logs / temp
+# -------------------------
+*.log
