@@ -1,117 +1,106 @@
 import os
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, JSONLoader
+from langchain_community.document_loaders import (
+    DirectoryLoader,
+    PyPDFLoader,
+    JSONLoader,
+)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from app.config.settings import VECTOR_DB_PATH, COLLECTION_NAME, BASE_DIR
 
-print("📂 BASE_DIR:", BASE_DIR)
-print("📦 VECTOR_DB_PATH:", VECTOR_DB_PATH)
+from app.config.settings import BASE_DIR
+from app.retrieval.vectorstore import get_vectorstore
 
-# ----------------------------
-# 0. Embeddings
-# ----------------------------
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    encode_kwargs={"batch_size": 16},
-)
 
-# ----------------------------
-# 1. SAFETY GUARD (CRITICAL)
-# ----------------------------
-vectorstore_check = Chroma(
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=VECTOR_DB_PATH,
-)
+def main():
+    print("📂 BASE_DIR:", BASE_DIR)
 
-existing_count = vectorstore_check._collection.count()
+    # ----------------------------
+    # 1. Get Vector Store (ABSTRACTED)
+    # ----------------------------
+    vectorstore = get_vectorstore()
 
-if existing_count > 0:
-    print(f"⚠️ Collection '{COLLECTION_NAME}' already contains {existing_count} documents.")
-    print("❌ Ingestion aborted to prevent duplicate insertion.")
-    exit(0)
+    existing_count = vectorstore.count()
 
-print("✅ Vector store empty. Safe to ingest.")
+    if existing_count > 0:
+        print(f"⚠️ Vector store already contains {existing_count} documents.")
+        print("❌ Ingestion aborted to prevent duplicate insertion.")
+        return
 
-# ----------------------------
-# 2. Load PDFs (Contextual / Non-binding)
-# ----------------------------
-pdf_loader = DirectoryLoader(
-    path=os.path.join(BASE_DIR, "data", "pdf_files"),
-    glob="**/*.pdf",
-    loader_cls=PyPDFLoader,
-)
+    print("✅ Vector store empty. Safe to ingest.")
 
-pdf_docs = pdf_loader.load()
+    # ----------------------------
+    # 2. Load PDFs (Contextual)
+    # ----------------------------
+    pdf_loader = DirectoryLoader(
+        path=os.path.join(BASE_DIR, "data", "pdf_files"),
+        glob="**/*.pdf",
+        loader_cls=PyPDFLoader,
+    )
 
-for doc in pdf_docs:
-    doc.metadata.update({
-        "source_type": "pdf",
-        "authority_level": "contextual",      # LOW AUTHORITY
-        "document_class": "reference",
-    })
+    pdf_docs = pdf_loader.load()
 
-print(f"📄 PDF docs loaded: {len(pdf_docs)}")
+    for doc in pdf_docs:
+        doc.metadata.update({
+            "source_type": "pdf",
+            "authority_level": "contextual",
+            "document_class": "reference",
+        })
 
-# ----------------------------
-# 3. Load JSON (Acts / Statutory)
-# ----------------------------
-json_loader = DirectoryLoader(
-    path=os.path.join(BASE_DIR, "data", "json_files"),
-    glob="**/*.json",
-    loader_cls=JSONLoader,
-    loader_kwargs={
-        "jq_schema": ".. | strings",
-        "text_content": True,
-    },
-)
+    print(f"📄 PDF docs loaded: {len(pdf_docs)}")
 
-json_docs = json_loader.load()
+    # ----------------------------
+    # 3. Load JSON (Statutory)
+    # ----------------------------
+    json_loader = DirectoryLoader(
+        path=os.path.join(BASE_DIR, "data", "json_files"),
+        glob="**/*.json",
+        loader_cls=JSONLoader,
+        loader_kwargs={
+            "jq_schema": ".. | strings",
+            "text_content": True,
+        },
+    )
 
-for doc in json_docs:
-    doc.metadata.update({
-        "source_type": "json",
-        "authority_level": "statutory",       # HIGH AUTHORITY
-        "document_class": "act",
-    })
+    json_docs = json_loader.load()
 
-print(f"🧾 JSON docs loaded: {len(json_docs)}")
+    for doc in json_docs:
+        doc.metadata.update({
+            "source_type": "json",
+            "authority_level": "statutory",
+            "document_class": "act",
+        })
 
-# ----------------------------
-# 4. Merge documents
-# ----------------------------
-documents = pdf_docs + json_docs
-print(f"📚 Total raw documents: {len(documents)}")
+    print(f"🧾 JSON docs loaded: {len(json_docs)}")
 
-# ----------------------------
-# 5. Chunk (metadata preserved)
-# ----------------------------
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1500,
-    chunk_overlap=200,
-)
+    # ----------------------------
+    # 4. Merge Documents
+    # ----------------------------
+    documents = pdf_docs + json_docs
+    print(f"📚 Total raw documents: {len(documents)}")
 
-chunks = text_splitter.split_documents(documents)
-print(f"✂️ Total chunks created: {len(chunks)}")
+    # ----------------------------
+    # 5. Chunk (Metadata Preserved)
+    # ----------------------------
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500,
+        chunk_overlap=200,
+    )
 
-# ----------------------------
-# 6. Embed + Store (BATCHED)
-# ----------------------------
-vectorstore = Chroma(
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=VECTOR_DB_PATH,
-)
+    chunks = text_splitter.split_documents(documents)
+    print(f"✂️ Total chunks created: {len(chunks)}")
 
-BATCH_SIZE = 500
+    # ----------------------------
+    # 6. Store via Vector Store Interface
+    # ----------------------------
+    BATCH_SIZE = 500
 
-for i in range(0, len(chunks), BATCH_SIZE):
-    batch = chunks[i:i + BATCH_SIZE]
-    print(f"➡️ Inserting batch {i // BATCH_SIZE + 1}")
-    vectorstore.add_documents(batch)
+    for i in range(0, len(chunks), BATCH_SIZE):
+        batch = chunks[i:i + BATCH_SIZE]
+        print(f"➡️ Inserting batch {i // BATCH_SIZE + 1}")
+        vectorstore.add_documents(batch)
 
-vectorstore.persist()
+    print("✅ INGESTION COMPLETE")
+    print("📦 Final document count:", vectorstore.count())
 
-print("✅ INGESTION COMPLETE")
-print("📦 Final document count:", vectorstore._collection.count())
+
+if __name__ == "__main__":
+    main()
