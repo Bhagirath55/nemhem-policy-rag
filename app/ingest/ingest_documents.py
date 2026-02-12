@@ -1,117 +1,237 @@
 import os
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, JSONLoader
+import json
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from app.config.settings import VECTOR_DB_PATH, COLLECTION_NAME, BASE_DIR
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
+from langchain_core.documents import Document
 
-print("📂 BASE_DIR:", BASE_DIR)
-print("📦 VECTOR_DB_PATH:", VECTOR_DB_PATH)
+from app.config.settings import BASE_DIR
+from app.retrieval.vectorstore import get_vectorstore
 
-# ----------------------------
-# 0. Embeddings
-# ----------------------------
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    encode_kwargs={"batch_size": 16},
-)
 
-# ----------------------------
-# 1. SAFETY GUARD (CRITICAL)
-# ----------------------------
-vectorstore_check = Chroma(
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=VECTOR_DB_PATH,
-)
+# =========================================================
+# 🔹 Recursive paragraph extractor
+# =========================================================
 
-existing_count = vectorstore_check._collection.count()
+def extract_paragraph_text(para):
 
-if existing_count > 0:
-    print(f"⚠️ Collection '{COLLECTION_NAME}' already contains {existing_count} documents.")
-    print("❌ Ingestion aborted to prevent duplicate insertion.")
-    exit(0)
+    if isinstance(para, str):
+        return para
 
-print("✅ Vector store empty. Safe to ingest.")
+    if isinstance(para, dict):
 
-# ----------------------------
-# 2. Load PDFs (Contextual / Non-binding)
-# ----------------------------
-pdf_loader = DirectoryLoader(
-    path=os.path.join(BASE_DIR, "data", "pdf_files"),
-    glob="**/*.pdf",
-    loader_cls=PyPDFLoader,
-)
+        text = ""
 
-pdf_docs = pdf_loader.load()
+        if "text" in para:
+            text += para["text"] + "\n"
 
-for doc in pdf_docs:
-    doc.metadata.update({
-        "source_type": "pdf",
-        "authority_level": "contextual",      # LOW AUTHORITY
-        "document_class": "reference",
-    })
+        if "contains" in para:
+            for sub in para["contains"].values():
+                text += extract_paragraph_text(sub) + "\n"
 
-print(f"📄 PDF docs loaded: {len(pdf_docs)}")
+        return text.strip()
 
-# ----------------------------
-# 3. Load JSON (Acts / Statutory)
-# ----------------------------
-json_loader = DirectoryLoader(
-    path=os.path.join(BASE_DIR, "data", "json_files"),
-    glob="**/*.json",
-    loader_cls=JSONLoader,
-    loader_kwargs={
-        "jq_schema": ".. | strings",
-        "text_content": True,
-    },
-)
+    return ""
 
-json_docs = json_loader.load()
 
-for doc in json_docs:
-    doc.metadata.update({
-        "source_type": "json",
-        "authority_level": "statutory",       # HIGH AUTHORITY
-        "document_class": "act",
-    })
+# =========================================================
+# 🔹 Parse Legal JSON
+# =========================================================
 
-print(f"🧾 JSON docs loaded: {len(json_docs)}")
+def parse_legal_json(file_path):
 
-# ----------------------------
-# 4. Merge documents
-# ----------------------------
-documents = pdf_docs + json_docs
-print(f"📚 Total raw documents: {len(documents)}")
+    documents = []
 
-# ----------------------------
-# 5. Chunk (metadata preserved)
-# ----------------------------
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1500,
-    chunk_overlap=200,
-)
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-chunks = text_splitter.split_documents(documents)
-print(f"✂️ Total chunks created: {len(chunks)}")
+    act_title = data.get("Act Title", "Unknown Act")
+    act_id = data.get("Act ID", "Unknown ID")
 
-# ----------------------------
-# 6. Embed + Store (BATCHED)
-# ----------------------------
-vectorstore = Chroma(
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=VECTOR_DB_PATH,
-)
+    # =====================================================
+    # CASE 1 → JSON HAS PARTS
+    # (Insurance Act 1938 structure)
+    # =====================================================
+    if "Parts" in data:
 
-BATCH_SIZE = 500
+        parts = data.get("Parts", {})
 
-for i in range(0, len(chunks), BATCH_SIZE):
-    batch = chunks[i:i + BATCH_SIZE]
-    print(f"➡️ Inserting batch {i // BATCH_SIZE + 1}")
-    vectorstore.add_documents(batch)
+        for part in parts.values():
 
-vectorstore.persist()
+            part_name = part.get("Name", "Unknown Part")
+            sections = part.get("Sections", {})
 
-print("✅ INGESTION COMPLETE")
-print("📦 Final document count:", vectorstore._collection.count())
+            for section_number, section in sections.items():
+
+                section_heading = section.get("heading", "")
+                paragraphs = section.get("paragraphs", {})
+
+                full_text = f"{section_number} {section_heading}\n\n"
+
+                for para in paragraphs.values():
+                    full_text += extract_paragraph_text(para) + "\n"
+
+                if full_text.strip():
+
+                    documents.append(
+                        Document(
+                            page_content=full_text.strip(),
+                            metadata={
+                                "act_title": act_title,
+                                "act_id": act_id,
+                                "part": part_name,
+                                "section_number": section_number,
+                                "section_heading": section_heading,
+                                "authority_level": "statutory",
+                                "source_type": "json",
+                                "source": file_path,
+                            },
+                        )
+                    )
+
+    # =====================================================
+    # CASE 2 → JSON HAS CHAPTERS
+    # (General Insurance Act 1972 structure)
+    # =====================================================
+    elif "Chapters" in data:
+
+        chapters = data.get("Chapters", {})
+
+        for chapter in chapters.values():
+
+            chapter_name = chapter.get("Name", "Unknown Chapter")
+            sections = chapter.get("Sections", {})
+
+            for section_number, section in sections.items():
+
+                section_heading = section.get("heading", "")
+                paragraphs = section.get("paragraphs", {})
+
+                full_text = f"{section_number} {section_heading}\n\n"
+
+                for para in paragraphs.values():
+                    full_text += extract_paragraph_text(para) + "\n"
+
+                if full_text.strip():
+
+                    documents.append(
+                        Document(
+                            page_content=full_text.strip(),
+                            metadata={
+                                "act_title": act_title,
+                                "act_id": act_id,
+                                "chapter": chapter_name,
+                                "section_number": section_number,
+                                "section_heading": section_heading,
+                                "authority_level": "statutory",
+                                "source_type": "json",
+                                "source": file_path,
+                            },
+                        )
+                    )
+
+    return documents
+
+
+# =========================================================
+# 🔹 MAIN INGESTION PIPELINE
+# =========================================================
+
+def main():
+
+    print("📂 BASE_DIR:", BASE_DIR)
+
+    vectorstore = get_vectorstore()
+
+    existing_count = vectorstore.count()
+
+    if existing_count > 0:
+        print(f"⚠️ Vector store already contains {existing_count} documents.")
+        print("❌ Ingestion aborted to prevent duplicate insertion.")
+        return
+
+    print("✅ Vector store empty. Safe to ingest.")
+
+    # =====================================================
+    # 1. LOAD PDFs
+    # =====================================================
+    pdf_loader = DirectoryLoader(
+        path=os.path.join(BASE_DIR, "data", "pdf_files"),
+        glob="**/*.pdf",
+        loader_cls=PyPDFLoader,
+    )
+
+    pdf_docs = pdf_loader.load()
+
+    for doc in pdf_docs:
+        doc.metadata.update({
+            "source_type": "pdf",
+            "authority_level": "contextual",
+            "document_class": "reference",
+        })
+
+    print(f"📄 PDF docs loaded: {len(pdf_docs)}")
+
+    # =====================================================
+    # 2. LOAD JSON FILES
+    # =====================================================
+    json_dir = os.path.join(BASE_DIR, "data", "json_files")
+    json_docs = []
+
+    for file in os.listdir(json_dir):
+
+        if file.endswith(".json"):
+
+            file_path = os.path.join(json_dir, file)
+            print(f"📄 Parsing JSON file: {file}")
+
+            parsed_docs = parse_legal_json(file_path)
+
+            if parsed_docs:
+                print("Sample metadata:", parsed_docs[0].metadata)
+            else:
+                print("⚠ No sections extracted")
+
+            json_docs.extend(parsed_docs)
+
+    print(f"🧾 JSON sections extracted: {len(json_docs)}")
+
+    # =====================================================
+    # 3. MERGE DOCUMENTS
+    # =====================================================
+    documents = pdf_docs + json_docs
+    print(f"📚 Total raw documents: {len(documents)}")
+
+    # =====================================================
+    # 4. CHUNKING
+    # =====================================================
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1500,
+        chunk_overlap=200,
+    )
+
+    chunks = text_splitter.split_documents(documents)
+
+    print(f"✂️ Total chunks created: {len(chunks)}")
+
+    # =====================================================
+    # 5. INSERT INTO VECTOR STORE
+    # =====================================================
+    BATCH_SIZE = 500
+
+    for i in range(0, len(chunks), BATCH_SIZE):
+
+        batch = chunks[i:i + BATCH_SIZE]
+
+        print(f"➡️ Inserting batch {i // BATCH_SIZE + 1}")
+
+        vectorstore.add_documents(batch)
+
+    print("✅ INGESTION COMPLETE")
+    print("📦 Final document count:", vectorstore.count())
+
+
+# =========================================================
+
+if __name__ == "__main__":
+    main()
