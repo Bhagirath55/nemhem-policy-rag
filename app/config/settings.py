@@ -1,14 +1,21 @@
 import os
 from dotenv import load_dotenv
+from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
 
-# This MUST resolve to POLICY_RAG2
+# =========================
+# Base Paths
+# =========================
+
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 
-# 🔑 IMPORTANT: point to the EXISTING Chroma DB
+# =========================
+# Vector Store Configuration
+# =========================
+
 VECTOR_DB_PATH = os.path.join(
     BASE_DIR,
     "notebooks",
@@ -17,6 +24,18 @@ VECTOR_DB_PATH = os.path.join(
 )
 
 COLLECTION_NAME = "policy_documents_final"
+
+# =========================
+# Embedding Configuration
+# =========================
+
+EMBEDDINGS = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+
+# =========================
+# LLM / API Keys
+# =========================
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
