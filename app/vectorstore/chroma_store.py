@@ -1,6 +1,6 @@
 from langchain_chroma import Chroma
 from app.vectorstore.base import BaseVectorStore
-from app.config.settings import VECTOR_DB_PATH, COLLECTION_NAME, EMBEDDINGS
+from app.config.settings import (VECTOR_DB_PATH, COLLECTION_NAME, EMBEDDINGS)
 
 
 class ChromaVectorStore(BaseVectorStore):

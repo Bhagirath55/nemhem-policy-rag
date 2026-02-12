@@ -1,6 +1,5 @@
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from app.config.settings import VECTOR_DB_PATH, COLLECTION_NAME
+from app.config.settings import (VECTOR_DB_PATH, COLLECTION_NAME, EMBEDDINGS)
 
 
 def retrieve_json_and_pdf(

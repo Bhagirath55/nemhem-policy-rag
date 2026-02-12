@@ -11,18 +11,6 @@ def main():
     print("System ready.")
     print("Documents:", vectorstore.count())
 
-    # 🔎 TEMP METADATA TEST
-    print("\n🔎 METADATA TEST")
-
-    docs = vectorstore.similarity_search("leave", k=2)
-
-    for d in docs:
-        print("\nCONTENT PREVIEW:")
-        print(d.page_content[:200])
-
-        print("\nMETADATA:")
-        print(d.metadata)
-
     while True:
         query = input("\nEnter query (or 'exit'): ")
         if query.lower() == "exit":
