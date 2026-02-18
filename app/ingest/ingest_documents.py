@@ -1,3 +1,5 @@
+# LEGACY MODULE – Will be deprecated after deterministic + hybrid migration
+
 import os
 import json
 

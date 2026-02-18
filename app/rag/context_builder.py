@@ -1,3 +1,5 @@
+# LEGACY MODULE – Will be deprecated after deterministic + hybrid migration
+
 def build_context_and_sources(docs):
     context_blocks = []
     sources = []

@@ -1,3 +1,5 @@
+# LEGACY MODULE – Will be deprecated after deterministic + hybrid migration
+
 from langchain_community.vectorstores import Chroma
 from app.config.settings import (VECTOR_DB_PATH, COLLECTION_NAME, EMBEDDINGS)
 

@@ -1,3 +1,5 @@
+# LEGACY MODULE – Will be deprecated after deterministic + hybrid migration
+
 import os
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings

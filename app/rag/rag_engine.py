@@ -1,3 +1,5 @@
+# LEGACY MODULE – Will be deprecated after deterministic + hybrid migration
+
 from app.rag.context_builder import build_context_and_sources
 
 def rag_answer(query, docs, llm):
