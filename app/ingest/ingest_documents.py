@@ -1,5 +1,3 @@
-# LEGACY MODULE – Will be deprecated after deterministic + hybrid migration
-
 import os
 import json
 
@@ -9,6 +7,7 @@ from langchain_core.documents import Document
 
 from app.config.settings import BASE_DIR
 from app.retrieval.vectorstore import get_vectorstore
+from app.utils.id_generator import generate_section_id
 
 
 # =========================================================
@@ -48,12 +47,12 @@ def parse_legal_json(file_path):
         data = json.load(f)
 
     act_title = data.get("Act Title", "Unknown Act")
-    act_id = data.get("Act ID", "Unknown ID")
+    act_id = data.get("Act ID", "Unknown_ID")
 
     # =====================================================
     # CASE 1 → JSON HAS PARTS
-    # (Insurance Act 1938 structure)
     # =====================================================
+    
     if "Parts" in data:
 
         parts = data.get("Parts", {})
@@ -75,12 +74,18 @@ def parse_legal_json(file_path):
 
                 if full_text.strip():
 
+                    # 🔥 Generate section_id
+                    section_id = generate_section_id(
+                        act_id=act_id, section_number=section_number
+                    )
+
                     documents.append(
                         Document(
                             page_content=full_text.strip(),
                             metadata={
                                 "act_title": act_title,
                                 "act_id": act_id,
+                                "section_id": section_id,  # ✅ IMPORTANT
                                 "part": part_name,
                                 "section_number": section_number,
                                 "section_heading": section_heading,
@@ -93,7 +98,6 @@ def parse_legal_json(file_path):
 
     # =====================================================
     # CASE 2 → JSON HAS CHAPTERS
-    # (General Insurance Act 1972 structure)
     # =====================================================
     elif "Chapters" in data:
 
@@ -116,12 +120,18 @@ def parse_legal_json(file_path):
 
                 if full_text.strip():
 
+                    # 🔥 Generate section_id
+                    section_id = generate_section_id(
+                        act_id=act_id, section_number=section_number
+                    )
+
                     documents.append(
                         Document(
                             page_content=full_text.strip(),
                             metadata={
                                 "act_title": act_title,
                                 "act_id": act_id,
+                                "section_id": section_id,  # ✅ IMPORTANT
                                 "chapter": chapter_name,
                                 "section_number": section_number,
                                 "section_heading": section_heading,
@@ -139,17 +149,15 @@ def parse_legal_json(file_path):
 # 🔹 MAIN INGESTION PIPELINE
 # =========================================================
 
+
 def main():
 
     print("📂 BASE_DIR:", BASE_DIR)
 
     vectorstore = get_vectorstore()
 
-    existing_count = vectorstore.count()
-
-    if existing_count > 0:
-        print(f"⚠️ Vector store already contains {existing_count} documents.")
-        print("❌ Ingestion aborted to prevent duplicate insertion.")
+    if vectorstore.count() > 0:
+        print("❌ Vector store not empty. Aborting to prevent duplicates.")
         return
 
     print("✅ Vector store empty. Safe to ingest.")
@@ -166,11 +174,13 @@ def main():
     pdf_docs = pdf_loader.load()
 
     for doc in pdf_docs:
-        doc.metadata.update({
-            "source_type": "pdf",
-            "authority_level": "contextual",
-            "document_class": "reference",
-        })
+        doc.metadata.update(
+            {
+                "source_type": "pdf",
+                "authority_level": "contextual",
+                "document_class": "reference",
+            }
+        )
 
     print(f"📄 PDF docs loaded: {len(pdf_docs)}")
 
@@ -181,31 +191,18 @@ def main():
     json_docs = []
 
     for file in os.listdir(json_dir):
-
         if file.endswith(".json"):
-
             file_path = os.path.join(json_dir, file)
             print(f"📄 Parsing JSON file: {file}")
-
-            parsed_docs = parse_legal_json(file_path)
-
-            if parsed_docs:
-                print("Sample metadata:", parsed_docs[0].metadata)
-            else:
-                print("⚠ No sections extracted")
-
-            json_docs.extend(parsed_docs)
+            json_docs.extend(parse_legal_json(file_path))
 
     print(f"🧾 JSON sections extracted: {len(json_docs)}")
 
-    # =====================================================
-    # 3. MERGE DOCUMENTS
-    # =====================================================
     documents = pdf_docs + json_docs
     print(f"📚 Total raw documents: {len(documents)}")
 
     # =====================================================
-    # 4. CHUNKING
+    # 3. CHUNKING
     # =====================================================
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500,
@@ -216,24 +213,26 @@ def main():
 
     print(f"✂️ Total chunks created: {len(chunks)}")
 
+    # 🔥 ENSURE section_id EXISTS IN EVERY JSON CHUNK
+    for chunk in chunks:
+        if chunk.metadata.get("source_type") == "json":
+            if "section_id" not in chunk.metadata:
+                raise ValueError("❌ section_id missing in JSON chunk metadata")
+
     # =====================================================
-    # 5. INSERT INTO VECTOR STORE
+    # 4. INSERT INTO VECTOR STORE
     # =====================================================
+    
     BATCH_SIZE = 500
 
     for i in range(0, len(chunks), BATCH_SIZE):
-
-        batch = chunks[i:i + BATCH_SIZE]
-
+        batch = chunks[i : i + BATCH_SIZE]
         print(f"➡️ Inserting batch {i // BATCH_SIZE + 1}")
-
         vectorstore.add_documents(batch)
 
     print("✅ INGESTION COMPLETE")
     print("📦 Final document count:", vectorstore.count())
 
-
-# =========================================================
 
 if __name__ == "__main__":
     main()
